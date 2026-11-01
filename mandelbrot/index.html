@@ -1,0 +1,867 @@
+<title>Mandelbrot Viewer</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700&family=IBM+Plex+Mono:wght@400;500&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: full-bleed fractal canvas; one floating instrument panel docked bottom-left, becoming a bottom sheet on phones.
+   Deliberately single-theme: the fractal is the light source, so the chrome stays dark in every host theme. */
+:root {
+  --void: #07080b;
+  --panel: rgba(13, 15, 21, 0.86);
+  --line: rgba(186, 196, 228, 0.14);
+  --line-strong: rgba(186, 196, 228, 0.28);
+  --text: #e8eaf1;
+  --muted: #959cad;
+  --accent: #e9c27a;
+  --warn: #f2a65e;
+  --f-display: "Bricolage Grotesque", "Helvetica Neue", Arial, sans-serif;
+  --f-body: "IBM Plex Sans", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  --inset-t: env(safe-area-inset-top, 0px);
+  --inset-r: env(safe-area-inset-right, 0px);
+  --inset-b: env(safe-area-inset-bottom, 0px);
+  --inset-l: env(safe-area-inset-left, 0px);
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--void);
+  color: var(--text);
+  font-family: var(--f-body);
+  font-size: 13px;
+  line-height: 1.45;
+  overflow: hidden;
+  padding-left: max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+}
+.stage { position: fixed; inset: 0; background: var(--void); }
+#c { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; outline: none; }
+#c.dragging { cursor: grabbing; }
+#c:focus-visible { box-shadow: inset 0 0 0 2px var(--accent); }
+
+.panel {
+  position: fixed;
+  left: calc(16px + var(--inset-l));
+  bottom: calc(16px + var(--inset-b));
+  width: 304px;
+  max-height: calc(100% - 32px - var(--inset-t) - var(--inset-b));
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  backdrop-filter: blur(14px) saturate(1.2);
+  -webkit-backdrop-filter: blur(14px) saturate(1.2);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.45);
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 12px 14px 10px;
+  border-bottom: 1px solid var(--line);
+}
+.title { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+h1 {
+  margin: 0;
+  font-family: var(--f-display);
+  font-weight: 700;
+  font-size: 19px;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+  text-wrap: balance;
+}
+.formula { font-family: var(--f-mono); font-size: 11.5px; color: var(--muted); }
+.formula b { color: var(--accent); font-weight: 500; }
+.panel-body {
+  overflow-y: auto;
+  padding: 12px 14px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+.panel.collapsed .panel-body { display: none; }
+.panel.collapsed .panel-head { border-bottom: 0; }
+
+.section { display: flex; flex-direction: column; gap: 8px; }
+.label {
+  font-size: 10.5px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+}
+.readout {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  column-gap: 12px;
+  row-gap: 3px;
+  font-family: var(--f-mono);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+.readout dt { color: var(--muted); }
+.readout dd { margin: 0; text-align: right; overflow-wrap: anywhere; min-width: 0; }
+.status {
+  font-family: var(--f-mono);
+  font-size: 11.5px;
+  color: var(--muted);
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+}
+.status .live { color: var(--accent); }
+.warn {
+  font-size: 12px;
+  color: var(--warn);
+  border-left: 2px solid var(--warn);
+  padding-left: 8px;
+}
+
+.row { display: flex; align-items: center; gap: 10px; }
+.row label { flex: 0 0 auto; color: var(--text); }
+.row output { font-family: var(--f-mono); font-size: 12px; font-variant-numeric: tabular-nums; color: var(--muted); min-width: 4.5em; text-align: right; }
+input[type="range"] { flex: 1 1 auto; min-width: 0; accent-color: var(--accent); }
+.check { display: inline-flex; align-items: center; gap: 6px; cursor: pointer; }
+.check input { accent-color: var(--accent); margin: 0; }
+
+.swatches { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; }
+.swatch {
+  height: 26px;
+  border-radius: 5px;
+  border: 1px solid var(--line-strong);
+  cursor: pointer;
+  padding: 0;
+}
+.swatch[aria-pressed="true"] { outline: 2px solid var(--accent); outline-offset: 2px; }
+.palette-name { font-size: 12px; color: var(--muted); }
+
+.places { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; }
+button {
+  font: inherit;
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 6px 9px;
+  cursor: pointer;
+  text-align: left;
+}
+button:hover { background: rgba(255, 255, 255, 0.08); border-color: var(--line-strong); }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.place small { display: block; font-family: var(--f-mono); font-size: 10.5px; color: var(--muted); }
+.actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.actions button { flex: 1 1 auto; text-align: center; }
+button.primary { border-color: rgba(233, 194, 122, 0.45); color: var(--accent); }
+button[aria-pressed="true"] { background: rgba(233, 194, 122, 0.14); border-color: rgba(233, 194, 122, 0.55); color: var(--accent); }
+.icon-btn { padding: 4px 9px; font-size: 12px; color: var(--muted); flex: 0 0 auto; }
+.hint { font-size: 11.5px; color: var(--muted); margin: 0; }
+.hint kbd { font-family: var(--f-mono); font-size: 10.5px; border: 1px solid var(--line-strong); border-radius: 3px; padding: 0 4px; }
+
+@media (max-width: 640px) {
+  .panel {
+    left: calc(10px + var(--inset-l));
+    right: calc(10px + var(--inset-r));
+    bottom: calc(10px + var(--inset-b));
+    width: auto;
+    max-height: 52%;
+  }
+  .hint.desktop { display: none; }
+}
+@media (min-width: 641px) { .hint.touch { display: none; } }
+</style>
+
+<div class="stage">
+  <canvas id="c" tabindex="0" aria-label="Mandelbrot set. Drag to pan, scroll or pinch to zoom, arrow keys pan, plus and minus keys zoom."></canvas>
+</div>
+
+<aside class="panel" id="panel">
+  <div class="panel-head">
+    <div class="title">
+      <h1>Mandelbrot Viewer</h1>
+      <span class="formula">z<sub>n+1</sub> = z<sub>n</sub>² + <b>c</b></span>
+    </div>
+    <button class="icon-btn" id="collapse" aria-expanded="true" aria-controls="panel-body">Hide</button>
+  </div>
+
+  <div class="panel-body" id="panel-body">
+    <div class="section">
+      <span class="label">Centre of view</span>
+      <dl class="readout">
+        <dt>Re(c)</dt><dd id="re">–</dd>
+        <dt>Im(c)</dt><dd id="im">–</dd>
+        <dt>Zoom</dt><dd id="mag">–</dd>
+        <dt>Pointer</dt><dd id="ptr">–</dd>
+      </dl>
+      <div class="status"><span id="status" class="live">Starting…</span><span id="iters"></span></div>
+      <div class="warn" id="warn" hidden>This is as deep as 64-bit numbers can go. Zooming further only makes the pixels larger.</div>
+    </div>
+
+    <div class="section">
+      <span class="label">Places to visit</span>
+      <div class="places" id="places"></div>
+    </div>
+
+    <div class="section">
+      <span class="label">Colour</span>
+      <div class="swatches" id="swatches"></div>
+      <span class="palette-name" id="palette-name"></span>
+      <div class="row">
+        <label for="density">Bands</label>
+        <input type="range" id="density" min="0" max="1000" value="500">
+        <output id="density-out" for="density"></output>
+      </div>
+      <div class="row">
+        <label for="offset">Shift</label>
+        <input type="range" id="offset" min="0" max="1000" value="0">
+        <output id="offset-out" for="offset"></output>
+      </div>
+      <div class="actions">
+        <button id="cycle" aria-pressed="false">Cycle colours</button>
+      </div>
+    </div>
+
+    <div class="section">
+      <span class="label">Detail</span>
+      <div class="row">
+        <label for="iter">Iterations</label>
+        <input type="range" id="iter" min="0" max="1000" value="300">
+        <output id="iter-out" for="iter"></output>
+      </div>
+      <label class="check"><input type="checkbox" id="auto" checked> Raise iterations automatically as you zoom</label>
+    </div>
+
+    <div class="actions">
+      <button class="primary" id="reset">Whole set</button>
+      <button id="copy">Copy coordinates</button>
+    </div>
+
+    <p class="hint desktop">Drag to pan. Scroll to zoom. Double-click to zoom in, <kbd>Shift</kbd>+double-click to zoom out. Keys: arrows, <kbd>+</kbd>, <kbd>−</kbd>.</p>
+    <p class="hint touch">Drag to pan. Pinch to zoom. Double-tap to zoom in.</p>
+  </div>
+</aside>
+
+<script>
+"use strict";
+
+/* ---------- Escape-time computation (runs inside Web Workers) ---------- */
+function computeRows(job) {
+  var w = job.w, h = job.h, y0 = job.y0, y1 = job.y1;
+  var cx = job.cx, cy = job.cy, scale = job.scale, maxIter = job.maxIter;
+  var rows = y1 - y0;
+  var out = new Float32Array(w * rows);
+  var LOG2 = Math.log(2);
+  var halfW = w / 2, halfH = h / 2;
+  for (var j = 0; j < rows; j++) {
+    var ci = cy - (y0 + j + 0.5 - halfH) * scale;
+    var ci2 = ci * ci;
+    for (var i = 0; i < w; i++) {
+      var cr = cx + (i + 0.5 - halfW) * scale;
+      // Skip the main cardioid and the period-2 bulb: both are entirely inside the set.
+      var xq = cr - 0.25, q = xq * xq + ci2;
+      if (q * (q + xq) <= 0.25 * ci2 || (cr + 1) * (cr + 1) + ci2 <= 0.0625) {
+        out[j * w + i] = -1;
+        continue;
+      }
+      var zr = 0, zi = 0, zr2 = 0, zi2 = 0, n = 0;
+      var pr = 0, pi = 0, period = 0, check = 8;
+      var inside = false;
+      while (zr2 + zi2 <= 65536) {
+        if (n >= maxIter) { inside = true; break; }
+        zi = 2 * zr * zi + ci;
+        zr = zr2 - zi2 + cr;
+        zr2 = zr * zr;
+        zi2 = zi * zi;
+        n++;
+        // Periodicity check: an orbit that repeats exactly will never escape.
+        if (zr === pr && zi === pi) { inside = true; break; }
+        if (++period > check) { period = 0; check *= 2; pr = zr; pi = zi; }
+      }
+      if (inside) {
+        out[j * w + i] = -1;
+      } else {
+        // Smooth (continuous) escape count, so the colour bands blend instead of stepping.
+        var logZn = Math.log(zr2 + zi2) / 2;
+        out[j * w + i] = n + 1 - Math.log(logZn / LOG2) / LOG2;
+      }
+    }
+  }
+  return { gen: job.gen, pass: job.pass, y0: y0, rows: rows, w: w, out: out };
+}
+
+/* ---------- Palettes ---------- */
+var PALETTES = {
+  classic:  { name: "Ultramarine",  stops: [[0, "#000764"], [0.16, "#206bcb"], [0.42, "#edffff"], [0.6425, "#ffaa00"], [0.8575, "#000200"], [1, "#000764"]] },
+  copper:   { name: "Copper",       stops: [[0, "#120804"], [0.3, "#7a3410"], [0.55, "#f0a35e"], [0.7, "#fff1d6"], [0.85, "#9c4a1a"], [1, "#120804"]] },
+  lichen:   { name: "Lichen",       stops: [[0, "#0a1c19"], [0.28, "#2f6b4f"], [0.52, "#dbe9a6"], [0.74, "#4f8a78"], [1, "#0a1c19"]] },
+  nocturne: { name: "Nocturne",     stops: [[0, "#05040f"], [0.3, "#3b1f6e"], [0.55, "#c86fc9"], [0.7, "#ffe3f1"], [0.86, "#2c5c9e"], [1, "#05040f"]] },
+  ink:      { name: "Ink and paper", stops: [[0, "#0b0b0c"], [0.5, "#f1f0ea"], [1, "#0b0b0c"]] }
+};
+var LUT_SIZE = 1024;
+var lut = new Uint32Array(LUT_SIZE);
+var INTERIOR = 0xff000000; // opaque black (ABGR, little-endian)
+
+function hexToRgb(hex) {
+  var v = parseInt(hex.slice(1), 16);
+  return [(v >> 16) & 255, (v >> 8) & 255, v & 255];
+}
+function buildLut(key) {
+  var stops = PALETTES[key].stops.map(function (s) { return [s[0], hexToRgb(s[1])]; });
+  for (var i = 0; i < LUT_SIZE; i++) {
+    var t = i / LUT_SIZE, k = 0;
+    while (k < stops.length - 2 && t > stops[k + 1][0]) k++;
+    var a = stops[k], b = stops[k + 1];
+    var f = (t - a[0]) / (b[0] - a[0]);
+    f = f * f * (3 - 2 * f); // smoothstep between stops
+    var r = Math.round(a[1][0] + (b[1][0] - a[1][0]) * f);
+    var g = Math.round(a[1][1] + (b[1][1] - a[1][1]) * f);
+    var bl = Math.round(a[1][2] + (b[1][2] - a[1][2]) * f);
+    lut[i] = (255 << 24 | bl << 16 | g << 8 | r) >>> 0;
+  }
+}
+
+/* ---------- State ---------- */
+var $ = function (s) { return document.querySelector(s); };
+var canvas = $("#c");
+var ctx = canvas.getContext("2d", { alpha: false });
+var lastCanvas = document.createElement("canvas");
+var lastCtx = lastCanvas.getContext("2d", { alpha: false });
+var smallCanvas = document.createElement("canvas");
+var smallCtx = smallCanvas.getContext("2d", { alpha: false });
+
+var dpr = 1, cssW = 1, cssH = 1, W = 1, H = 1;
+var view = null; // { cx, cy, span } — span is the width of the shorter side, in complex units
+var settings = { palette: "classic", density: 1, offset: 0, autoIter: true, iter: 400, cycling: false };
+
+var fullImage = null, full32 = null;
+var gen = 0, passes = [], activeView = null, rendering = false, renderStart = 0;
+var finalValid = false, finalBuf = null, lastView = null, lastStale = false;
+var renderTimer = 0;
+
+var PLACES = [
+  { id: "seahorse", name: "Seahorse Valley", cx: -0.7453, cy: 0.1127, span: 0.0065 },
+  { id: "elephant", name: "Elephant Valley", cx: 0.2822, cy: 0.0102, span: 0.018 },
+  { id: "spiral",   name: "Double spiral",   cx: -0.7435669, cy: 0.1314023, span: 0.0022 },
+  { id: "minibrot", name: "Mini Mandelbrot", cx: -1.7548776662, cy: 0, span: 0.04 },
+  { id: "dendrite", name: "Dendrite at c = i", cx: 0, cy: 1, span: 0.25 },
+  { id: "deep",     name: "Deep spiral",     cx: -0.7436438870371587, cy: 0.13182590420531197, span: 4e-12 }
+];
+
+/* ---------- Geometry helpers ---------- */
+function scaleOf(v) { return v.span / Math.min(cssW, cssH); } // complex units per CSS pixel
+function magnification(v) { return 3 / v.span; }
+function homeView() {
+  var s = Math.max(3.1 / cssW, 2.5 / cssH);
+  return { cx: -0.65, cy: 0, span: s * Math.min(cssW, cssH) };
+}
+function pixelToC(px, py, v) {
+  var s = scaleOf(v || view);
+  return { re: (v || view).cx + (px - cssW / 2) * s, im: (v || view).cy - (py - cssH / 2) * s };
+}
+function autoIterFor(v) {
+  var m = Math.max(0, Math.log10(magnification(v)));
+  return Math.min(20000, Math.round(160 * Math.pow(1 + m, 1.6)));
+}
+function currentIter() { return settings.autoIter ? autoIterFor(view) : settings.iter; }
+function minSpanAt(v) {
+  // Pixel spacing must stay a few steps above the gap between neighbouring 64-bit numbers.
+  var mag = Math.max(Math.abs(v.cx), Math.abs(v.cy), 1e-3);
+  return mag * 4e-16 * Math.min(W, H);
+}
+function clampView(v) {
+  v.span = Math.min(8, Math.max(v.span, minSpanAt(v)));
+  return v;
+}
+
+/* ---------- Workers ---------- */
+var workers = [], idle = [], jobQueue = [], fallbackBusy = false;
+function makeWorkers() {
+  var n = Math.min(8, Math.max(2, (navigator.hardwareConcurrency || 4)));
+  var src = computeRows.toString() +
+    "\nself.onmessage=function(e){var r=computeRows(e.data);self.postMessage(r,[r.out.buffer]);};";
+  try {
+    var url = URL.createObjectURL(new Blob([src], { type: "text/javascript" }));
+    for (var i = 0; i < n; i++) {
+      var wk = new Worker(url);
+      wk.onmessage = (function (w) {
+        return function (ev) { idle.push(w); onResult(ev.data); pump(); };
+      })(wk);
+      workers.push(wk);
+      idle.push(wk);
+    }
+  } catch (err) {
+    workers = []; idle = [];
+  }
+}
+function pump() {
+  if (!workers.length) {
+    if (!fallbackBusy && jobQueue.length) { fallbackBusy = true; setTimeout(fallbackStep, 0); }
+    return;
+  }
+  while (idle.length && jobQueue.length) idle.pop().postMessage(jobQueue.shift());
+}
+function fallbackStep() {
+  var t0 = performance.now();
+  while (jobQueue.length && performance.now() - t0 < 12) onResult(computeRows(jobQueue.shift()));
+  if (jobQueue.length) setTimeout(fallbackStep, 0); else fallbackBusy = false;
+}
+
+/* ---------- Rendering ---------- */
+function colourRange(buf, out32, start, end) {
+  var k = settings.density * LUT_SIZE / 48;
+  var o = settings.offset * LUT_SIZE;
+  var mask = LUT_SIZE - 1;
+  for (var i = start; i < end; i++) {
+    var v = buf[i];
+    out32[i] = v < 0 ? INTERIOR : lut[((v * k + o) | 0) & mask];
+  }
+}
+
+function cancelRender() {
+  gen++;
+  jobQueue.length = 0;
+  rendering = false;
+  finalValid = false;
+}
+
+function render() {
+  clearTimeout(renderTimer);
+  cancelRender();
+  clampView(view);
+  var maxIter = currentIter();
+  activeView = { cx: view.cx, cy: view.cy, span: view.span, cssW: cssW, cssH: cssH, dpr: dpr, maxIter: maxIter };
+  var lw = Math.max(1, Math.ceil(W / 8)), lh = Math.max(1, Math.ceil(H / 8));
+  passes = [
+    { w: lw, h: lh, buf: new Float32Array(lw * lh), remaining: 0 },
+    { w: W, h: H, buf: new Float32Array(W * H), remaining: 0 }
+  ];
+  rendering = true;
+  renderStart = performance.now();
+  setStatus("Rendering…", true);
+  updateReadout();
+  enqueuePass(0);
+}
+
+function enqueuePass(idx) {
+  var p = passes[idx];
+  var scale = scaleOf(activeView) * cssW / p.w;
+  var rowsPer = idx === 0 ? Math.max(1, Math.ceil(p.h / Math.max(1, workers.length) / 2)) : 6;
+  // Work outward from the middle row, so the centre of interest appears first.
+  var starts = [];
+  for (var y = 0; y < p.h; y += rowsPer) starts.push(y);
+  var mid = p.h / 2;
+  starts.sort(function (a, b) { return Math.abs(a + rowsPer / 2 - mid) - Math.abs(b + rowsPer / 2 - mid); });
+  p.remaining = starts.length;
+  for (var s = 0; s < starts.length; s++) {
+    jobQueue.push({
+      gen: gen, pass: idx, y0: starts[s], y1: Math.min(p.h, starts[s] + rowsPer),
+      w: p.w, h: p.h, cx: activeView.cx, cy: activeView.cy, scale: scale, maxIter: activeView.maxIter
+    });
+  }
+  pump();
+}
+
+function onResult(r) {
+  if (r.gen !== gen) return;
+  var p = passes[r.pass];
+  p.buf.set(r.out, r.y0 * p.w);
+  if (r.pass === 1) {
+    colourRange(p.buf, full32, r.y0 * p.w, (r.y0 + r.rows) * p.w);
+    ctx.putImageData(fullImage, 0, 0, 0, r.y0, p.w, r.rows);
+  }
+  if (--p.remaining > 0) return;
+  if (r.pass === 0) {
+    smallCanvas.width = p.w; smallCanvas.height = p.h;
+    var img = smallCtx.createImageData(p.w, p.h);
+    colourRange(p.buf, new Uint32Array(img.data.buffer), 0, p.w * p.h);
+    smallCtx.putImageData(img, 0, 0);
+    var dh = p.h * W / p.w;
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(smallCanvas, 0, (H - dh) / 2, W, dh);
+    enqueuePass(1);
+  } else {
+    finishRender();
+  }
+}
+
+function finishRender() {
+  rendering = false;
+  finalValid = true;
+  finalBuf = passes[1].buf;
+  lastView = activeView;
+  lastCanvas.width = W; lastCanvas.height = H;
+  lastCtx.drawImage(canvas, 0, 0);
+  lastStale = false;
+  var ms = Math.round(performance.now() - renderStart);
+  setStatus("Rendered in " + (ms < 1000 ? ms + " ms" : (ms / 1000).toFixed(1) + " s"), false);
+}
+
+function recolourAll() {
+  if (!finalValid) return;
+  colourRange(finalBuf, full32, 0, W * H);
+  ctx.putImageData(fullImage, 0, 0);
+  lastStale = true;
+}
+
+// Show the last finished image moved and scaled to the new view while the new one computes.
+function drawPreview() {
+  ctx.fillStyle = "#07080b";
+  ctx.fillRect(0, 0, W, H);
+  if (!lastView) return;
+  var s = scaleOf(view);
+  var ls = lastView.span / Math.min(lastView.cssW, lastView.cssH);
+  var k = ls / s;
+  var dx = cssW / 2 + (lastView.cx - view.cx) / s - (lastView.cssW / 2) * k;
+  var dy = cssH / 2 - (lastView.cy - view.cy) / s - (lastView.cssH / 2) * k;
+  ctx.imageSmoothingEnabled = k < 4;
+  ctx.drawImage(lastCanvas, dx * dpr, dy * dpr, lastView.cssW * k * dpr, lastView.cssH * k * dpr);
+}
+
+function beginInteraction() {
+  if (finalValid && lastStale) {
+    lastCtx.drawImage(canvas, 0, 0);
+    lastStale = false;
+  }
+  cancelRender();
+}
+function viewChanged(delay) {
+  clampView(view);
+  drawPreview();
+  updateReadout();
+  setStatus("Waiting…", true);
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(render, delay);
+}
+
+/* ---------- Readout ---------- */
+var SUP = { "0": "⁰", "1": "¹", "2": "²", "3": "³", "4": "⁴", "5": "⁵", "6": "⁶", "7": "⁷", "8": "⁸", "9": "⁹", "-": "⁻" };
+function fmtMag(m) {
+  if (m < 1000) return "×" + (m < 10 ? m.toFixed(2) : m.toFixed(0));
+  var e = Math.floor(Math.log10(m));
+  var mant = m / Math.pow(10, e);
+  return "×" + mant.toFixed(2) + " × 10" + String(e).split("").map(function (ch) { return SUP[ch]; }).join("");
+}
+function digitsFor(v) {
+  var s = scaleOf(v) / dpr;
+  return Math.min(17, Math.max(5, Math.ceil(-Math.log10(s)) + 1));
+}
+function fmtNum(x, d) {
+  var t = Math.abs(x).toFixed(d);
+  return (x < 0 && Number(t) !== 0 ? "−" : "") + t;
+}
+function fmtC(re, im, d) {
+  return fmtNum(re, d) + (im < 0 ? " − " : " + ") + Math.abs(im).toFixed(d) + "i";
+}
+function updateReadout() {
+  var d = digitsFor(view);
+  $("#re").textContent = fmtNum(view.cx, d);
+  $("#im").textContent = fmtNum(view.cy, d);
+  $("#mag").textContent = fmtMag(magnification(view));
+  var it = currentIter();
+  $("#iters").textContent = it.toLocaleString("en-GB") + " iterations";
+  $("#warn").hidden = view.span > minSpanAt(view) * 1.05;
+  if (settings.autoIter) {
+    $("#iter").value = iterToSlider(it);
+    $("#iter-out").textContent = it.toLocaleString("en-GB");
+  }
+}
+function setStatus(text, live) {
+  var el = $("#status");
+  el.textContent = text;
+  el.classList.toggle("live", !!live);
+}
+
+/* ---------- Pointer and keyboard ---------- */
+var pointers = new Map(), drag = null, pinch = null, lastPtr = null;
+
+function localPos(e) {
+  var r = canvas.getBoundingClientRect();
+  return { x: e.clientX - r.left, y: e.clientY - r.top };
+}
+function startDrag(pos) {
+  drag = { x: pos.x, y: pos.y, cx: view.cx, cy: view.cy };
+}
+function startPinch() {
+  var pts = Array.from(pointers.values());
+  var mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+  pinch = {
+    dist: Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1,
+    anchor: pixelToC(mid.x, mid.y),
+    span: view.span
+  };
+}
+
+canvas.addEventListener("pointerdown", function (e) {
+  canvas.setPointerCapture(e.pointerId);
+  var pos = localPos(e);
+  pointers.set(e.pointerId, pos);
+  beginInteraction();
+  if (pointers.size === 1) { startDrag(pos); canvas.classList.add("dragging"); }
+  else if (pointers.size === 2) { drag = null; startPinch(); }
+});
+canvas.addEventListener("pointermove", function (e) {
+  var pos = localPos(e);
+  lastPtr = pos;
+  showPointer(pos);
+  if (!pointers.has(e.pointerId)) return;
+  pointers.set(e.pointerId, pos);
+  var s = scaleOf(view);
+  if (pointers.size === 1 && drag) {
+    view.cx = drag.cx - (pos.x - drag.x) * s;
+    view.cy = drag.cy + (pos.y - drag.y) * s;
+    viewChanged(400);
+  } else if (pointers.size === 2 && pinch) {
+    var pts = Array.from(pointers.values());
+    var mid = { x: (pts[0].x + pts[1].x) / 2, y: (pts[0].y + pts[1].y) / 2 };
+    var dist = Math.hypot(pts[0].x - pts[1].x, pts[0].y - pts[1].y) || 1;
+    view.span = pinch.span * pinch.dist / dist;
+    clampView(view);
+    var ns = scaleOf(view);
+    view.cx = pinch.anchor.re - (mid.x - cssW / 2) * ns;
+    view.cy = pinch.anchor.im + (mid.y - cssH / 2) * ns;
+    viewChanged(400);
+  }
+});
+function endPointer(e) {
+  if (!pointers.has(e.pointerId)) return;
+  pointers.delete(e.pointerId);
+  if (pointers.size === 1) {
+    pinch = null;
+    startDrag(Array.from(pointers.values())[0]);
+  } else if (pointers.size === 0) {
+    drag = null; pinch = null;
+    canvas.classList.remove("dragging");
+    clearTimeout(renderTimer);
+    renderTimer = setTimeout(render, 30);
+  }
+}
+canvas.addEventListener("pointerup", endPointer);
+canvas.addEventListener("pointercancel", endPointer);
+canvas.addEventListener("pointerleave", function () { if (!pointers.size) $("#ptr").textContent = "–"; });
+
+function zoomAt(px, py, factor) {
+  var c = pixelToC(px, py);
+  view.span *= factor;
+  clampView(view);
+  var s = scaleOf(view);
+  view.cx = c.re - (px - cssW / 2) * s;
+  view.cy = c.im + (py - cssH / 2) * s;
+}
+canvas.addEventListener("wheel", function (e) {
+  e.preventDefault();
+  beginInteraction();
+  var dy = e.deltaY * (e.deltaMode === 1 ? 16 : e.deltaMode === 2 ? 400 : 1);
+  dy = Math.max(-300, Math.min(300, dy));
+  var pos = localPos(e);
+  zoomAt(pos.x, pos.y, Math.exp(dy * 0.0016));
+  viewChanged(180);
+}, { passive: false });
+canvas.addEventListener("dblclick", function (e) {
+  beginInteraction();
+  var pos = localPos(e);
+  zoomAt(pos.x, pos.y, e.shiftKey ? 3 : 1 / 3);
+  viewChanged(0);
+});
+canvas.addEventListener("keydown", function (e) {
+  var s = scaleOf(view), step = Math.min(cssW, cssH) * 0.12 * s, handled = true;
+  beginInteraction();
+  if (e.key === "ArrowLeft") view.cx -= step;
+  else if (e.key === "ArrowRight") view.cx += step;
+  else if (e.key === "ArrowUp") view.cy += step;
+  else if (e.key === "ArrowDown") view.cy -= step;
+  else if (e.key === "+" || e.key === "=") zoomAt(cssW / 2, cssH / 2, 0.5);
+  else if (e.key === "-" || e.key === "_") zoomAt(cssW / 2, cssH / 2, 2);
+  else handled = false;
+  if (handled) { e.preventDefault(); viewChanged(220); }
+  else if (!rendering && !finalValid) render();
+});
+
+function showPointer(pos) {
+  var c = pixelToC(pos.x, pos.y);
+  $("#ptr").textContent = fmtC(c.re, c.im, Math.min(digitsFor(view), 10));
+}
+
+/* ---------- Controls ---------- */
+var ITER_MIN = 50, ITER_MAX = 20000;
+function sliderToIter(v) { return Math.round(ITER_MIN * Math.pow(ITER_MAX / ITER_MIN, v / 1000)); }
+function iterToSlider(it) { return Math.round(1000 * Math.log(it / ITER_MIN) / Math.log(ITER_MAX / ITER_MIN)); }
+function sliderToDensity(v) { return Math.pow(10, (v - 500) / 500); } // 0.1 to 10
+function densityToSlider(d) { return Math.round(500 + 500 * Math.log10(d)); }
+
+function colourSettingsChanged() {
+  if (finalValid) recolourAll();
+  else if (rendering) render();
+  else lastStale = true;
+}
+
+function buildSwatches() {
+  var wrap = $("#swatches");
+  Object.keys(PALETTES).forEach(function (key) {
+    var p = PALETTES[key];
+    var b = document.createElement("button");
+    b.className = "swatch";
+    b.type = "button";
+    b.setAttribute("aria-label", p.name + " palette");
+    b.setAttribute("aria-pressed", String(key === settings.palette));
+    b.style.background = "linear-gradient(90deg," + p.stops.map(function (s) { return s[1] + " " + (s[0] * 100) + "%"; }).join(",") + ")";
+    b.addEventListener("click", function () {
+      settings.palette = key;
+      wrap.querySelectorAll(".swatch").forEach(function (el) { el.setAttribute("aria-pressed", String(el === b)); });
+      $("#palette-name").textContent = p.name;
+      buildLut(key);
+      colourSettingsChanged();
+    });
+    wrap.appendChild(b);
+  });
+  $("#palette-name").textContent = PALETTES[settings.palette].name;
+}
+
+function buildPlaces() {
+  var wrap = $("#places");
+  PLACES.forEach(function (pl) {
+    var b = document.createElement("button");
+    b.type = "button";
+    b.className = "place";
+    var m = magnification(pl);
+    b.innerHTML = "";
+    b.appendChild(document.createTextNode(pl.name));
+    var small = document.createElement("small");
+    small.textContent = fmtMag(m);
+    b.appendChild(small);
+    b.addEventListener("click", function () {
+      beginInteraction();
+      view = { cx: pl.cx, cy: pl.cy, span: pl.span };
+      lastView = null; // a jump this far makes the old image useless as a preview
+      drawPreview();
+      render();
+    });
+    wrap.appendChild(b);
+  });
+}
+
+function bindControls() {
+  var density = $("#density"), offset = $("#offset"), iter = $("#iter"), auto = $("#auto");
+  density.value = densityToSlider(settings.density);
+  offset.value = Math.round(settings.offset * 1000);
+  auto.checked = settings.autoIter;
+  if (!settings.autoIter) { iter.value = iterToSlider(settings.iter); $("#iter-out").textContent = settings.iter.toLocaleString("en-GB"); }
+  $("#density-out").textContent = settings.density.toFixed(2) + "×";
+  $("#offset-out").textContent = Math.round(settings.offset * 360) + "°";
+
+  density.addEventListener("input", function () {
+    settings.density = sliderToDensity(+density.value);
+    $("#density-out").textContent = settings.density.toFixed(2) + "×";
+    colourSettingsChanged();
+  });
+  offset.addEventListener("input", function () {
+    settings.offset = +offset.value / 1000;
+    $("#offset-out").textContent = Math.round(settings.offset * 360) + "°";
+    colourSettingsChanged();
+  });
+  iter.addEventListener("input", function () {
+    settings.autoIter = false;
+    auto.checked = false;
+    settings.iter = sliderToIter(+iter.value);
+    $("#iter-out").textContent = settings.iter.toLocaleString("en-GB");
+    clearTimeout(renderTimer);
+    renderTimer = setTimeout(render, 200);
+  });
+  auto.addEventListener("change", function () {
+    settings.autoIter = auto.checked;
+    if (!auto.checked) settings.iter = sliderToIter(+iter.value);
+    render();
+  });
+  $("#reset").addEventListener("click", function () {
+    beginInteraction();
+    view = homeView();
+    lastView = null;
+    drawPreview();
+    render();
+  });
+  $("#copy").addEventListener("click", function () {
+    var d = digitsFor(view);
+    var text = "c = " + fmtC(view.cx, view.cy, d) + ", zoom " + fmtMag(magnification(view)) + ", " + currentIter() + " iterations";
+    var done = function () { setStatus("Coordinates copied", false); };
+    var fail = function () { setStatus("Copying was blocked. Select the numbers above instead.", false); };
+    try {
+      navigator.clipboard.writeText(text).then(done, fail);
+    } catch (err) { fail(); }
+  });
+  $("#collapse").addEventListener("click", function () {
+    var panel = $("#panel"), btn = $("#collapse");
+    var collapsed = panel.classList.toggle("collapsed");
+    btn.textContent = collapsed ? "Show" : "Hide";
+    btn.setAttribute("aria-expanded", String(!collapsed));
+  });
+
+  var cycleBtn = $("#cycle");
+  var reduce = window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  var lastT = 0;
+  function cycleFrame(t) {
+    if (!settings.cycling) return;
+    if (lastT) {
+      settings.offset = (settings.offset + (t - lastT) * (reduce ? 0.00002 : 0.00008)) % 1;
+      offset.value = Math.round(settings.offset * 1000);
+      $("#offset-out").textContent = Math.round(settings.offset * 360) + "°";
+      if (finalValid) recolourAll();
+    }
+    lastT = t;
+    requestAnimationFrame(cycleFrame);
+  }
+  function setCycling(on) {
+    settings.cycling = on;
+    cycleBtn.setAttribute("aria-pressed", String(on));
+    cycleBtn.textContent = on ? "Stop cycling" : "Cycle colours";
+    lastT = 0;
+    if (on) requestAnimationFrame(cycleFrame);
+  }
+  cycleBtn.addEventListener("click", function () { setCycling(!settings.cycling); });
+  if (settings.cycling) setCycling(true);
+}
+
+/* ---------- Sizing and start-up ---------- */
+function resize() {
+  var r = canvas.getBoundingClientRect();
+  cssW = Math.max(1, r.width);
+  cssH = Math.max(1, r.height);
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  W = Math.max(1, Math.round(cssW * dpr));
+  H = Math.max(1, Math.round(cssH * dpr));
+  if (canvas.width === W && canvas.height === H && view) return;
+  canvas.width = W;
+  canvas.height = H;
+  fullImage = ctx.createImageData(W, H);
+  full32 = new Uint32Array(fullImage.data.buffer);
+  if (!view) view = homeView();
+  cancelRender();
+  drawPreview();
+  clearTimeout(renderTimer);
+  renderTimer = setTimeout(render, lastView ? 120 : 0);
+}
+
+function start(data) {
+  data = data || {};
+  if (data.view && isFinite(data.view.cx) && isFinite(data.view.cy) && data.view.span > 0) view = data.view;
+  if (data.settings) {
+    Object.keys(settings).forEach(function (k) { if (k in data.settings) settings[k] = data.settings[k]; });
+    if (!PALETTES[settings.palette]) settings.palette = "classic";
+  }
+  buildLut(settings.palette);
+  makeWorkers();
+  buildSwatches();
+  buildPlaces();
+  bindControls();
+  resize();
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(canvas);
+  else window.addEventListener("resize", resize);
+}
+
+var hot = window.claude && window.claude.hot;
+if (hot && typeof hot.snapshot === "function") {
+  try { hot.snapshot(function () { return { view: view, settings: settings }; }); } catch (err) { /* optional */ }
+}
+if (hot && typeof hot.ready === "function") hot.ready(start);
+else start((hot && hot.data) || {});
+</script>
